@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shattered Chess</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --accent: #ff6b6b;
+            --board-light: #d4c3a3;
+            --board-dark: #8a6a4b;
+            --highlight: rgba(123, 156, 72, 0.7);
+            --last-move: rgba(255, 255, 0, 0.35);
+            --crack-minor: rgba(255, 159, 67, 0.6);
+            --crack-severe: #ff9f43;
+            --abyss-color: #050505;
+            --abyss-glow: #ee5253;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-color); color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0; padding: 15px;
+            display: flex; justify-content: center; align-items: flex-start;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: flex; gap: 20px; width: 100%; max-width: 1200px;
+            flex-direction: row; justify-content: center; align-items: flex-start;
+        }
+
+        /* --- SIDE PANELS --- */
+        .panel {
+            background-color: var(--panel-bg); padding: 20px; border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5); flex: 1; min-width: 250px; max-width: 300px;
+            display: flex; flex-direction: column;
+        }
+        .panel h2 { margin-top: 0; color: var(--accent); border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 1.5rem; }
+
+        .rules-list { padding-left: 20px; line-height: 1.5; font-size: 0.9rem; margin: 0;}
+        .rules-list li { margin-bottom: 8px; }
+
+        #history-list {
+            flex-grow: 1; overflow-y: auto; max-height: 400px; display: grid;
+            grid-template-columns: 1fr 2fr 2fr; gap: 5px; font-family: monospace; font-size: 1.1rem;
+        }
+        .hist-row { display: contents; }
+        .hist-num { color: #666; text-align: right; padding-right: 10px; }
+        .hist-w, .hist-b { color: #ddd; }
+        .hist-b { color: #aaa; }
+        .hist-new { background-color: rgba(255, 255, 255, 0.1); }
+
+        /* --- MAIN BOARD AREA --- */
+        .board-wrapper {
+            display: flex; flex-direction: column; align-items: center;
+            flex: 2; max-width: 600px; width: 100%; margin: 0 auto;
+        }
+
+        h1 { margin: 0 0 5px 0; color: var(--accent); font-size: clamp(1.8rem, 4vw, 2.5rem); text-align: center; }
+        .subtitle { color: #aaa; margin-bottom: 15px; text-align: center; font-size: 0.9rem; }
+        
+        #status-bar {
+            display: flex; justify-content: space-between; width: 100%;
+            margin-bottom: 10px; font-size: 1.2rem; font-weight: bold;
+        }
+        #bot-status { color: #aaa; font-style: italic; font-size: 1rem; font-weight: normal; opacity: 0; }
+
+        /* SOLID GRID BOARD */
+        #board {
+            display: grid;
+            /* ЖЕЛЕЗОБЕТОННЫЙ КВАДРАТ: 8 колонок и 8 строк */
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border: 4px solid #333;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            background-color: #333;
+        }
+
+        .cell {
+            width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer; position: relative; user-select: none;
+        }
+
+        .dark { background-color: var(--board-dark); }
+        .light { background-color: var(--board-light); }
+
+        /* ФИГУРЫ */
+        .piece {
+            /* Ограничитель размера фигуры, чтобы она не распирала клетку */
+            font-size: min(8vw, 45px); 
+            z-index: 3;
+            pointer-events: none; /* Прозрачна для клика мышки */
+        }
+        .piece.w { color: #fff; text-shadow: 0 2px 5px rgba(0,0,0,0.8); }
+        .piece.b { color: #000; text-shadow: 0 1px 3px rgba(255,255,255,0.6); }
+
+        /* ПОДСВЕТКА */
+        .selected::before { content: ''; position: absolute; inset: 0; background-color: var(--highlight); z-index: 1; }
+        .last-move::before { content: ''; position: absolute; inset: 0; background-color: var(--last-move); z-index: 1; }
+        .valid-move::after {
+            content: ''; width: 25%; height: 25%; background-color: rgba(0,0,0,0.5);
+            border-radius: 50%; position: absolute; z-index: 4;
+        }
+        .check { box-shadow: inset 0 0 40px red !important; }
+
+        /* МЕХАНИКИ (РАСКОЛЫ И БЕЗДНЫ) */
+        .crack-minor { box-shadow: inset 0 0 15px var(--crack-minor); }
+        .crack-severe { box-shadow: inset 0 0 30px var(--crack-severe); }
+        .abyss {
+            background-color: var(--abyss-color) !important;
+            box-shadow: inset 0 0 30px var(--abyss-glow); border: 1px solid #111;
+        }
+        .abyss.valid-move::after { display: none; }
+
+        /* КООРДИНАТЫ */
+        .coord { position: absolute; font-size: 11px; font-weight: bold; z-index: 2; pointer-events: none; }
+        .coord-rank { top: 2px; left: 3px; }
+        .coord-file { bottom: 0px; right: 3px; }
+        .light .coord { color: var(--board-dark); }
+        .dark .coord { color: var(--board-light); }
+        .abyss .coord { color: #555 !important; }
+
+        /* ВСПЛЫВАЮЩИЕ ОКНА */
+        .modal-container {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .hidden { display: none !important; }
+        
+        .modal-container h2 { color: white; font-size: 2rem; margin: 0 0 20px 0; text-align: center; }
+        .btn {
+            padding: 12px 24px; font-size: 1.2rem; background-color: var(--accent); color: white;
+            border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+        }
+        #promo-options { display: flex; gap: 10px; }
+        .promo-btn { font-size: 3rem; background: #333; border: 2px solid #555; border-radius: 10px; cursor: pointer; color: white; padding: 10px; }
+
+        /* МОБИЛЬНАЯ АДАПТАЦИЯ */
+        @media (max-width: 900px) {
+            .container { flex-direction: column; align-items: center; gap: 15px; }
+            .panel { max-width: 100%; width: 100%; order: 2; }
+            .board-wrapper { order: 1; max-width: 500px; }
+            #history-list { max-height: 150px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Правила -->
+        <div class="panel">
+            <h2>📜 Mechanics</h2>
+            <ul class="rules-list">
+                <li><strong>Fracture:</strong> Capturing a piece cracks the square (yellow).</li>
+                <li><strong>Severe Fracture:</strong> A 2nd capture turns it red.</li>
+                <li><strong>The Abyss:</strong> Moving off a red square collapses it.</li>
+                <li><strong>Sight Blocked:</strong> Abysses block Rooks, Bishops, and Queens.</li>
+                <li><strong>Leapers:</strong> Knights jump over Abysses.</li>
+                <li><strong>Fatal Landing:</strong> Nothing can land in an Abyss.</li>
+                <hr style="border-color: #333; margin: 10px 0;">
+                <li><i>En Passant, Castling & Promotion work.</i></li>
+            </ul>
+        </div>
+
+        <!-- Доска -->
+        <div class="board-wrapper">
+            <h1>🌋 Shattered Chess</h1>
+            <div id="status-bar">
+                <span id="turn-indicator">White's Turn</span>
+                <span id="bot-status">AI is thinking...</span>
+            </div>
+            
+            <div id="board">
+                <!-- Клетки генерируются через JS -->
+            </div>
+        </div>
+
+        <!-- История ходов -->
+        <div class="panel">
+            <h2>📝 Match History</h2>
+            <div id="history-list"></div>
+        </div>
+    </div>
+
+    <!-- Модальные окна (Вынесены за пределы сетки доски) -->
+    <div id="game-over" class="modal-container hidden">
+        <h2 id="go-message">Checkmate!</h2>
+        <button class="btn" onclick="resetGame()">Play Again</button>
+    </div>
+
+    <div id="promotion-modal" class="modal-container hidden">
+        <h2>Promote Pawn</h2>
+        <div id="promo-options">
+            <button class="promo-btn" onclick="confirmPromotion('Q')">♛</button>
+            <button class="promo-btn" onclick="confirmPromotion('R')">♜</button>
+            <button class="promo-btn" onclick="confirmPromotion('B')">♝</button>
+            <button class="promo-btn" onclick="confirmPromotion('N')">♞</button>
+        </div>
+    </div>
+
+<script>
+    // --- АУДИО ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const SOUNDS = {
+        play(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const t = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+
+            if (type === 'move') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(300, t); osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+                gain.gain.setValueAtTime(0.5, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+                osc.start(t); osc.stop(t + 0.1);
+            } else if (type === 'capture') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(400, t); osc.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+                gain.gain.setValueAtTime(0.8, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                osc.start(t); osc.stop(t + 0.15);
+            } else if (type === 'crack') {
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, t); osc.frequency.linearRampToValueAtTime(50, t + 0.2);
+                gain.gain.setValueAtTime(0.6, t); gain.gain.linearRampToValueAtTime(0.01, t + 0.2);
+                osc.start(t); osc.stop(t + 0.2);
+            } else if (type === 'abyss') {
+                osc.type = 'square'; osc.frequency.setValueAtTime(150, t); osc.frequency.exponentialRampToValueAtTime(20, t + 0.5);
+                gain.gain.setValueAtTime(1, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+                osc.start(t); osc.stop(t + 0.5);
+            }
+        }
+    };
+
+    // --- ЛОГИКА ---
+    const PIECES = { 'P': '♟', 'R': '♜', 'N': '♞', 'B': '♝', 'Q': '♛', 'K': '♚' };
+    let state, uiState;
+    
+    function initEngine() {
+        state = {
+            board: [
+                ['bR','bN','bB','bQ','bK','bB','bN','bR'],
+                ['bP','bP','bP','bP','bP','bP','bP','bP'],
+                ['','','','','','','',''],
+                ['','','','','','','',''],
+                ['','','','','','','',''],
+                ['','','','','','','',''],
+                ['wP','wP','wP','wP','wP','wP','wP','wP'],
+                ['wR','wN','wB','wQ','wK','wB','wN','wR']
+            ],
+            damage: Array(8).fill(null).map(() => Array(8).fill(0)),
+            turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true },
+            epSquare: null, halfMoves: 0, moveNumber: 1,
+            inCheck: false, lastMove: null, stateLog: {}
+        };
+        uiState = { selected: null, validMoves: [], pendingPromo: null, isGameOver: false, isAI: false };
+    }
+
+    function cloneState(s) {
+        return {
+            board: s.board.map(r => [...r]), damage: s.damage.map(r => [...r]),
+            turn: s.turn, castling: { ...s.castling }, epSquare: s.epSquare,
+            halfMoves: s.halfMoves, moveNumber: s.moveNumber, inCheck: s.inCheck
+        };
+    }
+
+    function getStateString(s) { return s.board.flat().join(',') + '|' + s.damage.flat().join(',') + '|' + s.turn + '|' + JSON.stringify(s.castling) + '|' + s.epSquare; }
+    function isValid(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+    function isAbyss(st, r, c) { return st.board[r][c] === '' && st.damage[r][c] >= 2; }
+
+    function getPseudoLegalMoves(st, r, c) {
+        const piece = st.board[r][c];
+        if (!piece) return [];
+        const col = piece[0], type = piece[1], moves = [];
+
+        const addMove = (nr, nc, isCastle = false) => {
+            if (!isValid(nr, nc)) return false;
+            if (isAbyss(st, nr, nc)) return 'blocked';
+            const target = st.board[nr][nc];
+            if (target === '') { moves.push({ from: [r,c], to: [nr,nc], cap: false, castle: isCastle }); return 'continue'; }
+            if (target[0] !== col) { moves.push({ from: [r,c], to: [nr,nc], cap: target[1] }); }
+            return 'blocked';
+        };
+
+        if (['R','B','Q'].includes(type)) {
+            const dirs = [];
+            if (type === 'R' || type === 'Q') dirs.push([-1,0], [1,0], [0,-1], [0,1]);
+            if (type === 'B' || type === 'Q') dirs.push([-1,-1], [-1,1], [1,-1], [1,1]);
+            for (let d of dirs) { let step = 1; while (addMove(r + d[0]*step, c + d[1]*step) === 'continue') step++; }
+        } else if (type === 'N') {
+            [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(d => {
+                let nr = r+d[0], nc = c+d[1];
+                if (isValid(nr,nc) && !isAbyss(st,nr,nc) && (st.board[nr][nc]==='' || st.board[nr][nc][0]!==col))
+                    moves.push({ from: [r,c], to: [nr,nc], cap: st.board[nr][nc] ? st.board[nr][nc][1] : false });
+            });
+        } else if (type === 'K') {
+            [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(d => addMove(r+d[0], c+d[1]));
+            if (!st.inCheck) { 
+                const rank = col === 'w' ? 7 : 0;
+                if (r === rank && c === 4) {
+                    if (st.castling[col+'K'] && st.board[rank][5]==='' && !isAbyss(st,rank,5) && st.board[rank][6]==='' && !isAbyss(st,rank,6))
+                        moves.push({ from: [r,c], to: [rank,6], cap: false, castle: 'K' });
+                    if (st.castling[col+'Q'] && st.board[rank][3]==='' && !isAbyss(st,rank,3) && st.board[rank][2]==='' && !isAbyss(st,rank,2) && st.board[rank][1]==='' && !isAbyss(st,rank,1))
+                        moves.push({ from: [r,c], to: [rank,2], cap: false, castle: 'Q' });
+                }
+            }
+        } else if (type === 'P') {
+            const dir = col === 'w' ? -1 : 1, startRank = col === 'w' ? 6 : 1, promoRank = col === 'w' ? 0 : 7;
+            if (isValid(r+dir, c) && st.board[r+dir][c]==='' && !isAbyss(st, r+dir, c)) {
+                moves.push({ from: [r,c], to: [r+dir,c], cap: false, promo: r+dir === promoRank });
+                if (r === startRank && st.board[r+dir*2][c]==='' && !isAbyss(st, r+dir*2, c))
+                    moves.push({ from: [r,c], to: [r+dir*2,c], cap: false, epTarget: [r+dir, c] });
+            }
+            [-1, 1].forEach(dc => {
+                let nr = r+dir, nc = c+dc;
+                if (isValid(nr, nc) && !isAbyss(st, nr, nc)) {
+                    if (st.board[nr][nc] !== '' && st.board[nr][nc][0] !== col) moves.push({ from: [r,c], to: [nr,nc], cap: st.board[nr][nc][1], promo: nr === promoRank });
+                    else if (st.epSquare && st.epSquare[0] === nr && st.epSquare[1] === nc) moves.push({ from: [r,c], to: [nr,nc], cap: 'P', isEP: true }); 
+                }
+            });
+        }
+        return moves;
+    }
+
+    function isSquareAttacked(st, r, c, attackerCol) {
+        for (let i=0; i<8; i++) for (let j=0; j<8; j++)
+            if (st.board[i][j] && st.board[i][j][0] === attackerCol)
+                if (getPseudoLegalMoves(st, i, j).some(m => m.to[0]===r && m.to[1]===c)) return true;
+        return false;
+    }
+
+    function isKingInCheck(st, color) {
+        let kr=-1, kc=-1;
+        for (let i=0; i<8; i++) for (let j=0; j<8; j++) if (st.board[i][j] === color+'K') { kr=i; kc=j; break; }
+        return isSquareAttacked(st, kr, kc, color === 'w' ? 'b' : 'w');
+    }
+
+    function applyMove(st, m) {
+        const [fr, fc] = m.from, [tr, tc] = m.to;
+        const p = st.board[fr][fc], col = p[0], type = p[1];
+        let dmgSq = null, abyssCreated = false;
+
+        st.board[tr][tc] = m.promo ? col + m.promoTo : p;
+        st.board[fr][fc] = '';
+        
+        if (type === 'P' || m.cap) st.halfMoves = 0; else st.halfMoves++;
+        if (col === 'b') st.moveNumber++;
+        st.epSquare = m.epTarget || null;
+
+        if (m.cap) {
+            if (m.isEP) { st.board[fr][tc] = ''; st.damage[fr][tc]++; dmgSq = [fr, tc]; } 
+            else { st.damage[tr][tc]++; dmgSq = [tr, tc]; }
+        }
+        
+        if (st.damage[fr][fc] >= 2) abyssCreated = true;
+
+        if (m.castle === 'K') { st.board[tr][tc-1] = st.board[tr][7]; st.board[tr][7] = ''; }
+        else if (m.castle === 'Q') { st.board[tr][tc+1] = st.board[tr][0]; st.board[tr][0] = ''; }
+        if (type === 'K') { st.castling[col+'K'] = false; st.castling[col+'Q'] = false; }
+        if (type === 'R') {
+            if (fr===0 && fc===0) st.castling['bQ'] = false;
+            if (fr===0 && fc===7) st.castling['bK'] = false;
+            if (fr===7 && fc===0) st.castling['wQ'] = false;
+            if (fr===7 && fc===7) st.castling['wK'] = false;
+        }
+
+        st.turn = col === 'w' ? 'b' : 'w';
+        st.inCheck = isKingInCheck(st, st.turn);
+        return { st, dmgSq, abyssCreated }; 
+    }
+
+    function getLegalMoves(st, col) {
+        let moves = [];
+        for (let i=0; i<8; i++) for (let j=0; j<8; j++) {
+            if (st.board[i][j] && st.board[i][j][0] === col) {
+                getPseudoLegalMoves(st, i, j).forEach(m => {
+                    m.promoTo = m.promo ? 'Q' : null;
+                    const testSt = applyMove(cloneState(st), m).st;
+                    if (!isKingInCheck(testSt, col)) {
+                        if (m.castle && isSquareAttacked(st, m.from[0], m.castle === 'K' ? 5 : 3, col === 'w' ? 'b' : 'w')) return;
+                        moves.push(m);
+                    }
+                });
+            }
+        }
+        return moves;
+    }
+
+    function getAlgebraic(m, pieceType, inCheck, isMate) {
+        if (m.castle === 'K') return "O-O" + (isMate ? "#" : inCheck ? "+" : "");
+        if (m.castle === 'Q') return "O-O-O" + (isMate ? "#" : inCheck ? "+" : "");
+        const f = String.fromCharCode(97 + m.from[1]), r = 8 - m.from[0];
+        const tf = String.fromCharCode(97 + m.to[1]), tr = 8 - m.to[0];
+        let str = pieceType === 'P' ? (m.cap ? f : '') : pieceType;
+        if (m.cap) str += 'x';
+        str += tf + tr;
+        if (m.promoTo) str += '=' + m.promoTo;
+        if (isMate) str += '#'; else if (inCheck) str += '+';
+        return str;
+    }
+
+    // --- БОТ ---
+    const PIECE_VALS = { 'P': 10, 'N': 35, 'B': 30, 'R': 50, 'Q': 90, 'K': 9000 };
+    function evaluate(st) {
+        let score = 0;
+        for (let r=0; r<8; r++) for (let c=0; c<8; c++) {
+            const p = st.board[r][c];
+            if (p) {
+                let v = PIECE_VALS[p[1]];
+                if (p[1] === 'N') v += (r>2&&r<5&&c>2&&c<5) ? 3 : 0; 
+                score += (p[0] === 'w' ? v : -v);
+            }
+        }
+        return score;
+    }
+    
+    function minimax(st, depth, alpha, beta, isMax) {
+        if (depth === 0) return evaluate(st);
+        let moves = getLegalMoves(st, isMax ? 'w' : 'b');
+        if (!moves.length) return st.inCheck ? (isMax ? -9999 : 9999) : 0;
+        if (isMax) {
+            let maxE = -Infinity;
+            for (let m of moves) {
+                m.promoTo = m.promo ? 'Q' : null;
+                let e = minimax(applyMove(cloneState(st), m).st, depth - 1, alpha, beta, false);
+                maxE = Math.max(maxE, e); alpha = Math.max(alpha, e);
+                if (beta <= alpha) break;
+            }
+            return maxE;
+        } else {
+            let minE = Infinity;
+            for (let m of moves) {
+                m.promoTo = m.promo ? 'Q' : null;
+                let e = minimax(applyMove(cloneState(st), m).st, depth - 1, alpha, beta, true);
+                minE = Math.min(minE, e); beta = Math.min(beta, e);
+                if (beta <= alpha) break;
+            }
+            return minE;
+        }
+    }
+
+    function makeBotMove() {
+        uiState.isAI = true; document.getElementById('bot-status').style.opacity = '1';
+        setTimeout(() => {
+            const moves = getLegalMoves(state, 'b');
+            if (moves.length) {
+                moves.sort(() => Math.random() - 0.5);
+                let bestM = null, bestV = Infinity;
+                for (let m of moves) {
+                    m.promoTo = m.promo ? 'Q' : null;
+                    let v = minimax(applyMove(cloneState(state), m).st, 2, -Infinity, Infinity, true);
+                    if (v < bestV) { bestV = v; bestM = m; }
+                }
+                executeMove(bestM);
+            }
+            uiState.isAI = false; document.getElementById('bot-status').style.opacity = '0';
+        }, 50);
+    }
+
+    // --- УПРАВЛЕНИЕ ХОДОМ ---
+    function executeMove(m) {
+        const pieceMovedType = state.board[m.from[0]][m.from[1]][1]; 
+        const { st, dmgSq, abyssCreated } = applyMove(state, m);
+        const movesNext = getLegalMoves(st, st.turn);
+        const isMate = st.inCheck && movesNext.length === 0;
+        
+        const alg = getAlgebraic(m, pieceMovedType, st.inCheck, isMate);
+        
+        if (isMate) SOUNDS.play('capture'); 
+        else if (abyssCreated) SOUNDS.play('abyss');
+        else if (dmgSq) SOUNDS.play(st.damage[dmgSq[0]][dmgSq[1]] > 1 ? 'crack' : 'capture');
+        else SOUNDS.play('move');
+
+        updateHistoryUI(m, alg);
+        
+        state = st; state.lastMove = m;
+        uiState.selected = null; uiState.validMoves = [];
+        
+        const sStr = getStateString(state);
+        state.stateLog[sStr] = (state.stateLog[sStr] || 0) + 1;
+        
+        updateBoardUI();
+        checkGameEnd(movesNext);
+        
+        if (!uiState.isGameOver && state.turn === 'b') makeBotMove();
+        document.getElementById('turn-indicator').innerText = state.turn === 'w' ? "White's Turn" : "Black's Turn";
+    }
+
+    function checkGameEnd(moves) {
+        let msg = "";
+        if (moves.length === 0) msg = state.inCheck ? `Checkmate! ${state.turn === 'w' ? 'Black' : 'White'} wins.` : "Stalemate! Draw.";
+        else if (state.halfMoves >= 100) msg = "Draw by 50-move rule.";
+        else if (state.stateLog[getStateString(state)] >= 3) msg = "Draw by Repetition.";
+        
+        if (msg) {
+            uiState.isGameOver = true;
+            document.getElementById('go-message').innerText = msg;
+            document.getElementById('game-over').classList.remove('hidden');
+        }
+    }
+
+    function onSquareClick(r, c) {
+        if (uiState.isGameOver || uiState.isAI || state.turn !== 'w' || uiState.pendingPromo) return;
+
+        const isMove = uiState.validMoves.find(m => m.to[0] === r && m.to[1] === c);
+        if (isMove) {
+            if (isMove.promo) {
+                uiState.pendingPromo = isMove;
+                document.getElementById('promotion-modal').classList.remove('hidden');
+            } else {
+                executeMove(isMove);
+            }
+        } else {
+            const p = state.board[r][c];
+            if (p && p[0] === 'w') {
+                if (uiState.selected && uiState.selected.r === r && uiState.selected.c === c) {
+                    uiState.selected = null; uiState.validMoves = [];
+                } else {
+                    uiState.selected = { r, c };
+                    uiState.validMoves = getLegalMoves(state, 'w').filter(m => m.from[0] === r && m.from[1] === c);
+                    SOUNDS.play('move'); 
+                }
+            } else { uiState.selected = null; uiState.validMoves = []; }
+            updateBoardUI();
+        }
+    }
+
+    function confirmPromotion(type) {
+        document.getElementById('promotion-modal').classList.add('hidden');
+        uiState.pendingPromo.promoTo = type;
+        executeMove(uiState.pendingPromo);
+        uiState.pendingPromo = null;
+    }
+
+    // --- ОТРИСОВКА ---
+    function initBoardDOM() {
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        for (let r=0; r<8; r++) {
+            for (let c=0; c<8; c++) {
+                const cell = document.createElement('div');
+                cell.id = `cell-${r}-${c}`;
+                cell.onclick = () => onSquareClick(r, c);
+                
+                if (c === 0) cell.innerHTML += `<div class="coord coord-rank">${8-r}</div>`;
+                if (r === 7) cell.innerHTML += `<div class="coord coord-file">${String.fromCharCode(97+c)}</div>`;
+                
+                const span = document.createElement('span');
+                span.id = `piece-${r}-${c}`;
+                span.className = 'piece';
+                cell.appendChild(span);
+                
+                board.appendChild(cell);
+            }
+        }
+    }
+
+    function updateBoardUI() {
+        let kr=-1, kc=-1;
+        if (state.inCheck) {
+            for (let i=0; i<8; i++) for (let j=0; j<8; j++) if (state.board[i][j] === state.turn+'K') { kr=i; kc=j; break; }
+        }
+
+        for (let r=0; r<8; r++) {
+            for (let c=0; c<8; c++) {
+                const cell = document.getElementById(`cell-${r}-${c}`);
+                const span = document.getElementById(`piece-${r}-${c}`);
+                
+                cell.className = `cell ${(r+c)%2===0 ? 'light' : 'dark'}`;
+                
+                const dmg = state.damage[r][c];
+                if (dmg === 1) cell.classList.add('crack-minor');
+                else if (dmg >= 2) cell.classList.add(state.board[r][c]==='' ? 'abyss' : 'crack-severe');
+
+                if (uiState.selected && uiState.selected.r === r && uiState.selected.c === c) cell.classList.add('selected');
+                if (kr === r && kc === c) cell.classList.add('check');
+                if (uiState.validMoves.some(m => m.to[0]===r && m.to[1]===c)) cell.classList.add('valid-move');
+                if (state.lastMove && ((r===state.lastMove.from[0]&&c===state.lastMove.from[1]) || (r===state.lastMove.to[0]&&c===state.lastMove.to[1]))) {
+                    cell.classList.add('last-move');
+                }
+
+                const p = state.board[r][c];
+                if (p) {
+                    span.innerText = PIECES[p[1]];
+                    span.className = `piece ${p[0]}`;
+                } else {
+                    span.innerText = '';
+                    span.className = 'piece';
+                }
+            }
+        }
+    }
+
+    function updateHistoryUI(m, alg) {
+        const hList = document.getElementById('history-list');
+        document.querySelectorAll('.hist-new').forEach(el => el.classList.remove('hist-new'));
+
+        if (state.turn === 'b') { 
+            const num = document.createElement('div'); num.className = 'hist-num'; num.innerText = state.moveNumber + '.';
+            const moveW = document.createElement('div'); moveW.className = 'hist-w hist-new'; moveW.innerText = alg;
+            const moveB = document.createElement('div'); moveB.className = 'hist-b'; moveB.id = `hist-b-${state.moveNumber}`;
+            hList.appendChild(num); hList.appendChild(moveW); hList.appendChild(moveB);
+        } else { 
+            const targetRow = state.moveNumber - 1;
+            const moveB = document.getElementById(`hist-b-${targetRow}`);
+            if (moveB) { moveB.innerText = alg; moveB.classList.add('hist-new'); }
+        }
+        hList.scrollTop = hList.scrollHeight;
+    }
+
+    function resetGame() {
+        document.getElementById('game-over').classList.add('hidden');
+        document.getElementById('history-list').innerHTML = '';
+        initEngine();
+        initBoardDOM();
+        updateBoardUI();
+    }
+
+    // --- СТАРТ ---
+    document.body.addEventListener('click', () => {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    }, { once: true });
+
+    resetGame();
+</script>
+</body>
+</html>
